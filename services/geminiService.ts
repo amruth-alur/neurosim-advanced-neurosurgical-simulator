@@ -2,27 +2,17 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { PatientCase, BleedPoint, SurgicalStep } from "../types";
 
-// Initialize GoogleGenAI with API key directly from environment variable as per guidelines
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Removed global 'ai' instance to comply with guideline of creating right before call
 
 const patientSchema = {
   type: Type.OBJECT,
   properties: {
     name: { type: Type.STRING },
     age: { type: Type.NUMBER },
-    sex: { type: Type.STRING, enum: ['M', 'F'] },
+    sex: { type: Type.STRING },
     accidentType: { type: Type.STRING },
     pathology: { 
       type: Type.STRING, 
-      enum: [
-        'Epidural Hematoma (EDH)', 
-        'Acute Subdural Hematoma (ASDH)', 
-        'Intracerebral Hemorrhage (ICH)',
-        // Removed Depressed Skull Fracture as skull model is removed
-        'Penetrating Brain Injury',
-        'Massive Cerebral Edema',
-        'Posterior Fossa Hemorrhage'
-      ] 
     },
     ctReport: { type: Type.STRING, description: "Radiologist's concise report of the CT Scan findings." },
     symptoms: { type: Type.ARRAY, items: { type: Type.STRING } },
@@ -44,7 +34,7 @@ const patientSchema = {
         properties: {
           id: { type: Type.INTEGER },
           instruction: { type: Type.STRING },
-          category: { type: Type.STRING, enum: ['prep', 'procedure', 'post-op'] },
+          category: { type: Type.STRING },
           requiredTool: { type: Type.STRING }
         }
       }
@@ -54,12 +44,14 @@ const patientSchema = {
 };
 
 export const generateEmergencyCase = async (forcedPathology?: string): Promise<PatientCase> => {
+  // Initialize Gemini right before use as per best practices
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
   let promptText = `Generate a high-stakes neurosurgery trauma case due to a serious accident. `;
   
   if (forcedPathology) {
     promptText += `STRICTLY generate a case with the pathology: "${forcedPathology}". Ensure all vitals and reports match this condition perfectly.`;
   } else {
-    // UPDATED: Default prompt logic to favor Internal Injury and Accident mechanics
     promptText += `Focus on INTERNAL INJURY mechanics (e.g., deceleration shear, coup-contrecoup). 
     Select ONE specific pathology:
     1. Intracerebral Hemorrhage (ICH): Deep internal tissue bleed.
@@ -72,8 +64,9 @@ export const generateEmergencyCase = async (forcedPathology?: string): Promise<P
   promptText += `\nEnsure vitals match the internal injury severity (e.g., Cushing's triad for high ICP).`;
   promptText += `\nIMPORTANT: The simulation starts AFTER the bone flap has been removed. DO NOT include steps for 'Drilling', 'Craniotomy', or 'Bone Removal'. The first step should be 'Inspect Dura' or 'Remove Foreign Body' or 'Incise Dura'.`;
 
+  // Using gemini-3-pro-preview for complex medical scenario generation tasks
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-pro-preview',
     contents: promptText,
     config: {
       responseMimeType: "application/json",
@@ -93,18 +86,17 @@ export const generateEmergencyCase = async (forcedPathology?: string): Promise<P
   if (pathology.includes('Edema')) bleedCount = 4; // Diffuse
 
   const bleeds: BleedPoint[] = Array.from({ length: bleedCount }).map((_, i) => {
-    // REDUCED RADII to ensure bleeds are inside the brain mesh (which has approx radius 1.0 before scale)
-    let radius = 0.95; // Default surface
+    let radius = 0.95; 
     let theta = Math.random() * Math.PI * 2;
     let phi = Math.acos((Math.random() * 2) - 1);
-    let size = 0.3; // Slightly smaller size
+    let size = 0.3; 
     let vesselName = "Cortical Vessel";
     let vesselType: 'artery' | 'vein' = 'vein';
     let region = regions[Math.floor(Math.random() * regions.length)];
 
     if (pathology.includes('Epidural')) {
-      radius = 1.0; // Surface/Top
-      theta = Math.PI / 4; // Temporal
+      radius = 1.0; 
+      theta = Math.PI / 4; 
       phi = Math.PI / 2;
       size = 0.5;
       vesselName = "Middle Meningeal Artery";
@@ -112,23 +104,21 @@ export const generateEmergencyCase = async (forcedPathology?: string): Promise<P
       region = "Temporal Lobe";
     } 
     else if (pathology.includes('Posterior Fossa')) {
-      // Back and bottom
       radius = 0.8;
-      theta = Math.PI; // Back
-      phi = Math.PI * 0.8; // Bottom
+      theta = Math.PI; 
+      phi = Math.PI * 0.8; 
       vesselName = "PICA / Vertebral Art. Branch";
       vesselType = 'artery';
       region = "Cerebellum";
     }
     else if (pathology.includes('Penetrating')) {
-      // Frontal entry
       radius = 0.95; 
       theta = 0;
       phi = Math.PI / 2;
       vesselName = "Traumatized Cortical Vessel";
     }
     else if (pathology.includes('Intracerebral')) {
-      radius = 0.4; // Deep internal
+      radius = 0.4; 
       vesselName = "Lenticulostriate Artery";
       vesselType = 'artery';
     }
@@ -158,14 +148,17 @@ export const generateEmergencyCase = async (forcedPathology?: string): Promise<P
     id: Math.random().toString(36).substr(2, 9).toUpperCase(),
     bleeds,
     difficulty: pathology.includes('Edema') || pathology.includes('Posterior') ? 'consultant' : 'fellow',
-    // Key logic: only Penetrating injury starts with a foreign body present (removed = false)
     isForeignBodyRemoved: !pathology.includes('Penetrating') 
   };
 };
 
 export const getRealTimeGuidance = async (caseData: PatientCase, vitals: any, logs: string[]) => {
+  // Initialize Gemini right before use as per best practices
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
+  // Using gemini-3-flash-preview for real-time surgical guidance tasks
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     contents: `Pathology: ${caseData.pathology}. CT: ${caseData.ctReport}. Vitals: ${JSON.stringify(vitals)}. Logs: ${logs.join(' -> ')}.
     Identify the next immediate surgical step.`,
     config: {
